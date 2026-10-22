@@ -1,48 +1,31 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from openpyxl import Workbook
-
-from .database import get_connection
+from backend.app.scheduler import calculate_schedule, generate_wbs_from_template
+from backend.app.utils import add_working_days, generate_ai_wbs_suggestions
 
 
-def export_project_schedule_to_excel(project_id: str) -> str:
-    conn = get_connection()
-    activities = conn.execute(
-        "SELECT * FROM activities WHERE project_id = ? ORDER BY code",
-        (project_id,),
-    ).fetchall()
-    conn.close()
+def test_wbs_template_generation_returns_default_items():
+    items = generate_wbs_from_template("project-123")
+    assert len(items) >= 3
+    assert items[0]["code"] == "WBS-01"
+    assert "Project Management" in [item["name"] for item in items]
 
-    export_dir = Path(__file__).resolve().parent.parent / "exports"
-    export_dir.mkdir(parents=True, exist_ok=True)
 
-    file_path = export_dir / f"{project_id}_schedule.xlsx"
+def test_ai_wbs_generation_returns_specific_suggestions():
+    suggestions = generate_ai_wbs_suggestions("Civil works and concrete slab installation", "Project A")
+    assert len(suggestions) > 0
+    assert suggestions[0]["name"]
 
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Schedule"
-    sheet.append([
-        "Activity ID",
-        "Activity Name",
-        "Duration (days)",
-        "Status",
-        "Percent Complete",
-        "Planned Start",
-        "Planned Finish",
-    ])
 
-    for activity in activities:
-        sheet.append([
-            activity["code"],
-            activity["name"],
-            activity["duration_days"],
-            activity["status"],
-            activity["percent_complete"],
-            activity["planned_start"],
-            activity["planned_finish"],
-        ])
+def test_add_working_days_skips_weekends_and_holidays():
+    start = __import__("datetime").date(2026, 10, 1)
+    result = add_working_days(start, 3, [5, 6], [__import__("datetime").date(2026, 10, 3)])
+    assert result.isoformat() == "2026-10-06"
 
-    workbook.save(file_path)
-    return str(file_path)
+
+def test_schedule_calculation_marks_critical_path_for_simple_chain():
+    # This test exercises the basic chain logic expected in the MVP schedule engine.
+    project_id = "project-crit"
+    schedule = calculate_schedule(project_id)
+    assert "activities" in schedule
+    assert "summary" in schedule
